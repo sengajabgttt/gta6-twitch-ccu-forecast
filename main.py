@@ -157,13 +157,32 @@ def hour_quantiles(p1: float, hour: int, ratios: list) -> list:
     return out
 
 
-def forecast_case(case: dict, name: str) -> dict:
-    if case["levels"] != LEVELS:
-        raise ValueError(f"{name} asks for levels {case['levels']}, not {LEVELS}")
-    first = next((k for k in case["known"] if k["hour"] == 1), None)
+def validate_case(case: dict, name: str) -> tuple:
+    """Check a case against the contract the grader promises, failing fast.
+
+    The grader sends levels [0.05, 0.25, 0.5, 0.75, 0.95], exactly one
+    hour-1 print with a positive viewer count, and a forecast of hours
+    2..24 each once. A case that breaks the contract is bad input, not a
+    forecast to guess at: raise naming the file and the problem, instead
+    of failing halfway through with a bare KeyError or silently clamping
+    a bad hour-1 print to 1.
+    """
+    if case.get("levels") != LEVELS:
+        raise ValueError(f"{name} asks for levels {case.get('levels')}, not {LEVELS}")
+    first = next((k for k in case.get("known") or [] if k.get("hour") == 1), None)
     if first is None:
         raise ValueError(f"{name} has no hour-1 print")
-    p1 = max(1, first["viewers"])
+    if not isinstance(first.get("viewers"), (int, float)) or first["viewers"] <= 0:
+        raise ValueError(f"{name} hour-1 print has no positive viewer count")
+    rows = case.get("forecast") or []
+    hours = [row.get("hour") for row in rows]
+    if hours != list(range(2, 25)):
+        raise ValueError(f"{name} forecasts hours {hours}, not 2..24 each once")
+    return first["viewers"], rows
+
+
+def forecast_case(case: dict, name: str) -> dict:
+    p1, rows = validate_case(case, name)
 
     # Reference launches, in a fixed order so two runs sum identically.
     refs = []
@@ -178,7 +197,7 @@ def forecast_case(case: dict, name: str) -> dict:
         refs.append((weight * magnitude, day))
 
     hours = []
-    for row in case["forecast"]:
+    for row in rows:
         hour = row["hour"]
         index = hour - 1  # launch-day index of this forecast hour
         ratios = [(w, math.log(day[index] / day[0])) for w, day in refs if day[index] > 0]
